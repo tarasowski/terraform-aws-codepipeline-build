@@ -48,10 +48,29 @@ resource "aws_codepipeline" "pipeline" {
       owner           = "AWS"
       provider        = "CodeBuild"
       input_artifacts = ["source_output"]
+      output_artifacts = ["build_output"]
       version         = "1"
 
       configuration = {
         ProjectName = aws_codebuild_project.build_project.name
+      }
+    }
+  }
+
+    stage {
+    name = "Deploy"
+
+    action {
+      name             = "Deploy"
+      category         = "Deploy"
+      owner            = "AWS"
+      provider         = "CodeDeploy"
+      input_artifacts  = ["build_output"]
+      version          = "1"
+
+      configuration = {
+        ApplicationName  = aws_codedeploy_app.app.name
+        DeploymentGroupName = aws_codedeploy_deployment_group.group.deployment_group_name
       }
     }
   }
@@ -112,7 +131,8 @@ resource "aws_iam_policy" "codebuild_s3" {
       "Effect": "Allow",
       "Action": [
         "s3:GetObject",
-        "s3:GetObjectVersion"
+        "s3:GetObjectVersion",
+        "s3:Put*"
       ],
       "Resource": "*"
     }
@@ -260,4 +280,85 @@ resource "random_pet" "bucket_suffix" {
 
 resource "aws_s3_bucket" "artifact_store" {
   bucket = random_pet.bucket_suffix.id
+}
+
+output "deployment_group_name" {
+  description = "The name of the deployment group"
+  value       = aws_codedeploy_deployment_group.group.deployment_group_name
+}
+
+resource "aws_codedeploy_app" "app" {
+  name = "my-codedeploy-app"
+}
+
+resource "aws_codedeploy_deployment_group" "group" {
+  app_name               = aws_codedeploy_app.app.name
+  deployment_group_name  = "my-deployment-group"
+  service_role_arn       = aws_iam_role.role.arn
+
+
+  deployment_config_name = "CodeDeployDefault.OneAtATime"
+
+  ec2_tag_set {
+    ec2_tag_filter {
+      key   = "Name"
+      type  = "KEY_AND_VALUE"
+      value = "my-ec2-instance"
+    }
+  }
+}
+
+resource "aws_instance" "example" {
+  ami           = "ami-0c7217cdde317cfec" # This is an example Amazon Linux 2 AMI ID. Replace with the appropriate AMI ID for your region and instance type.
+  instance_type = "t2.micro"
+
+  tags = {
+    Name = "my-ec2-instance"
+  }
+}
+
+resource "aws_iam_role" "role" {
+  name = "my-codedeploy-role"
+
+  assume_role_policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Action": "sts:AssumeRole",
+      "Principal": {
+        "Service": "codedeploy.amazonaws.com"
+      },
+      "Effect": "Allow",
+      "Sid": ""
+    }
+  ]
+}
+EOF
+}
+
+resource "aws_iam_policy" "s3_access" {
+  name        = "S3AccessPolicy"
+  description = "Policy for accessing the S3 bucket"
+
+  policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:ListBucket"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+EOF
+}
+
+resource "aws_iam_role_policy_attachment" "s3_access_attachment" {
+  role       = aws_iam_role.role.name
+  policy_arn = aws_iam_policy.s3_access.arn
 }
